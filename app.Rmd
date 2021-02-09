@@ -1,0 +1,218 @@
+---
+title: "COVID19 Africa Report"
+output: 
+  html_document:
+    df_print: paged
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, cache = T, warning = F,
+                      message = F)
+```
+
+This report show....
+
+It includes data from... to ....
+
+
+### Time series of input data
+
+
+```{r ts_cases, cache=F}
+library(dplyr)
+library(plotly)
+library(shiny)
+library(plotly)
+library(ggplot2)
+
+all_input <- readRDS("inputs/all_input.rds") %>% 
+  select(-geom)
+
+name_vars <- c("observed" = "Daily cases", 
+               "rp100k" = "Daily cases per 100,000",
+               "sindex" = "Stringency Index",
+               "testing" = "Testing",
+               "temp" = "Temperature",
+               "rain" = "Rainfall",
+               "sh" = "Humidity")
+
+inputPanel(
+  selectInput("var", label = "Select variable:",
+              choices = c("Daily cases" = "observed", 
+                          "Daily cases per 100,000" = "rp100k",
+                          "Stringency Index" = "sindex",
+                          "Testing" = "testing",
+                          "Temperature" = "temp",
+                          "Rainfall" = "rain",
+                          "Humidity" = "sh")),
+  selectInput("country", label = "Select country:",
+              choices = unique(all_input$COUNTRY), 
+              multiple = T)
+)
+
+renderPlotly({
+  all_input %>%
+  filter(COUNTRY %in% input$country) %>% 
+  plot_ly(x = ~ time, y = ~ eval(as.name(input$var)), color = ~ COUNTRY,
+          type = "scatter", mode = "lines") %>%
+  layout(xaxis = list(title = ""),
+         yaxis = list(title = name_vars[[input$var]],
+                      hoverformat = ".2f"),
+         hovermode = "compare")
+})
+
+
+```
+
+
+### Spatial distribution of cumulative number of cases
+
+
+```{r map, out.width="100%"}
+library(sf)
+library(leaflet)
+library(leafem)
+
+counts <- readRDS("inputs/daily_cases_plot.rds")
+source("../R/functions.R")
+
+cases_total <- reshape_df(counts, "observed") %>%
+  group_by(COUNTRY) %>%
+  summarise(total = sum(observed))
+
+africa <- st_read("inputs/africa_plot.gpkg", quiet = T)
+
+africa <- africa %>%
+  inner_join(cases_total, by = c("name" = "COUNTRY"))
+
+africa$rpk100 <- (africa$total / africa$Pop2020) * 100000
+
+
+pal <- colorQuantile(palette = "RdYlBu", n = 10,
+                     domain = africa$rpk100, reverse = T)
+
+labF <- function(type, cuts, p) {
+    n = length(cuts)
+    paste0(round(cuts[-n]), " &ndash; ", round(cuts[-1]))
+  }
+
+labels <- sprintf("<strong> %s </strong>
+                  : %s",
+                  as.character(africa$name),
+                  round(africa$rpk100)) %>%
+  lapply(htmltools::HTML)
+
+leaflet() %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(data = africa,
+    color = "grey", weight = 1,
+    fillColor = ~ pal(rpk100), fillOpacity = 0.5,
+    highlightOptions = highlightOptions(color = "black", weight = 3),
+    label = labels,
+    labelOptions = labelOptions(
+      style = list(
+        "font-weight" = "normal",
+        padding = "3px 8px"
+      ),
+      textsize = "15px", direction = "auto"
+    )
+  ) %>%
+  addLegend(data = africa, pal = pal, values = ~ rpk100, opacity = 0.5,
+            labFormat = labF,
+            title = "Total number of</br>cases per 100,000", position = "bottomleft")
+ # addHomeButton(ext = raster::extent(africa), layer.name = "Africa")
+```
+
+# Model output
+
+**Table 1: Maximum likelihood estimates and corresponding 95% confidence intervals for a model with 7-day lag.** For climatic variables, a 1 standard deviation increase in climatic variables results in the shown relative risk.  For stringency index, a 10% increase in stringency is associated with the increased relative risk shown. HDI and testing policy are on ordinal scale 0 to 3 (HDI) and 0 to 4 (testing policy). Estimates that are statistically significant are highlighted in green. The spatial weight decay, $\rho$, reflects the strength of inter-country connectivity, and overdispersion parameter, $\psi$.
+
+```{r tab_params}
+fit <- readRDS("inputs/fitted_model_LAG7_RE.rds")
+
+beta_hat <- fit$coefficients[1:16]
+sd_hat <- fit$se[1:16]
+
+zscores <- beta_hat / sd_hat
+pvalues <- 2 * pnorm(abs(zscores), lower.tail = F)
+pvalues <- as.character(ifelse(pvalues < 0.001, "< 0.001", round(pvalues, 3))) 
+pvalues <- ifelse(nchar(pvalues) < 5, paste0(pvalues, 0), pvalues)
+pvalues <- tibble(Params = names(beta_hat), pvalues)
+
+tab <- readr::read_csv("inputs/tab_params_LAG7_RE.csv") %>% 
+  left_join(pvalues)
+
+tab <- tab[c(16, 9, 1:8, 15, 10:14, 17, 18), ]
+tab$pvalues[c(1, 2, 11, 17:18)] <- "-"
+tab[, 2:4] <- apply(tab[,2:4], 2, 
+                    function(x) ifelse(nchar(x) < 5, paste0(x, 0), x))
+
+tab$Params <- c("Intercept", "Intercept", "log(population)", "HDI",
+                "Landlocked", "Stringency$_{t-7}$", "Testing$_{t-7}$",
+                "Rain$_{t-7}$", "Temperature$_{t-7}$", "Humidity$_{t-7}$",
+                "Intercept", "log(population)",
+                "HDI", "Landlocked", "Stringency$_{t-7}$", "Testing$_{t-7}$", 
+                "$\\rho$", "$\\psi$")
+
+CI <- paste0("(", tab$`2.5 %`, ", ", tab$`97.5 %`, ")")
+tab$`97.5 %` <- NULL
+tab$`2.5 %` <- CI
+names(tab)[3] <- "CI"
+boldID <- which(tab$pvalues == "< 0.001" | as.numeric(tab$pvalues) <= 0.1)
+
+library(knitr)
+library(kableExtra)
+
+kbl(tab, col.names = c("Parameter", "Relative Risk", "95% CI", "p-value"), 
+    align = c("lccc"), ) %>% 
+  kable_material(full_width = T, font_size = 20) %>% 
+  row_spec(0, bold = T) %>% 
+  row_spec(boldID, background = "#cdf7d6", color = "Black") %>% 
+  pack_rows("Endemic", 1, 1, background = "#e8e8e8") %>% 
+  pack_rows("Within-country", 2, 10, background = "#e8e8e8") %>% 
+  pack_rows("Between-country", 11, 16, background = "#e8e8e8") %>% 
+  pack_rows("", 17, 18, background = "#e8e8e8")
+  
+```
+
+# Predictions
+
+```{r preds, cache = F}
+
+all_preds <- readr::read_csv("inputs/predictions.csv")
+
+inputPanel(
+  selectInput("ctr", label = "Select country:",
+              choices = unique(all_preds$cname))
+)
+
+renderPlotly({
+  gg <- all_preds %>%
+  filter(cname == input$ctr) %>% 
+    ggplot(aes(x = time)) +
+  geom_ribbon(aes(ymin = low95, ymax = up95, fill = type), alpha = .3) +
+  geom_ribbon(aes(ymin = low50, ymax = up50, fill = type), alpha = .3) +
+  geom_line(aes(y = mean, col = type), size = .8) +
+  geom_point(aes(y = observed, shape = type), size = 1.5) + 
+  labs(x = "", y = "Reported Cases") +
+  scale_fill_manual("50% - 95% CI", values = c("dodgerblue3", "orange"),
+                    labels = c("retrospective", "forecast")) +
+  scale_color_manual("Predicted mean", values = c("dodgerblue3", "orange"),
+                     labels = c("retrospective", "forecast")) +
+  scale_shape_manual("Reported cases", values = c(19, 21), labels = c("", "")) +
+  scale_x_date(expand = c(0, 1)) +
+  theme_gray(base_size = 21) +
+  theme(strip.text = element_text(face = "bold"),
+        legend.position = "top", legend.key=element_blank(),
+        legend.text = element_text(size = 18),
+        legend.key.size = unit(1, units = "cm")) +
+  guides(color = guide_legend(override.aes = list(size = 3)),
+         shape = guide_legend(override.aes = list(size = 4))) 
+  
+  ggplotly(gg)
+  
+})
+
+```
+
