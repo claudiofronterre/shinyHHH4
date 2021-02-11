@@ -75,7 +75,7 @@ library(leaflet)
 library(leafem)
 
 counts <- readRDS("inputs/daily_cases_plot.rds")
-source("../R/functions.R")
+source("R/functions.R")
 
 cases_total <- reshape_df(counts, "observed") %>%
   group_by(COUNTRY) %>%
@@ -188,30 +188,9 @@ inputPanel(
 )
 
 renderPlotly({
-  gg <- all_preds %>%
-  filter(cname == input$ctr) %>% 
-    ggplot(aes(x = time)) +
-  geom_ribbon(aes(ymin = low95, ymax = up95, fill = type), alpha = .3) +
-  geom_ribbon(aes(ymin = low50, ymax = up50, fill = type), alpha = .3) +
-  geom_line(aes(y = mean, col = type), size = .8) +
-  geom_point(aes(y = observed, shape = type), size = 1.5) + 
-  labs(x = "", y = "Reported Cases") +
-  scale_fill_manual("50% - 95% CI", values = c("dodgerblue3", "orange"),
-                    labels = c("retrospective", "forecast")) +
-  scale_color_manual("Predicted mean", values = c("dodgerblue3", "orange"),
-                     labels = c("retrospective", "forecast")) +
-  scale_shape_manual("Reported cases", values = c(19, 21), labels = c("", "")) +
-  scale_x_date(expand = c(0, 1)) +
-  theme_gray(base_size = 21) +
-  theme(strip.text = element_text(face = "bold"),
-        legend.position = "top", legend.key=element_blank(),
-        legend.text = element_text(size = 18),
-        legend.key.size = unit(1, units = "cm")) +
-  guides(color = guide_legend(override.aes = list(size = 3)),
-         shape = guide_legend(override.aes = list(size = 4))) 
-  
-  ggplotly(gg)
-  
+  all_preds %>%
+    filter(cname == input$ctr) %>% 
+    plot_preds()
 })
 
 ```
