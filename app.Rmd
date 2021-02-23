@@ -124,6 +124,77 @@ leaflet() %>%
  # addHomeButton(ext = raster::extent(africa), layer.name = "Africa")
 ```
 
+# Interactive map for costant over time input
+
+```{r map2, cache=F}
+
+africa$SSA <- as.factor(africa$SSA)
+name_vars_map <- c("HDI_2018" = "HDI in 2018", 
+                   "rpk100" = "Total number of</br>cases per 100,000",
+                   "SSA" = "SSA",
+                   "Pop2020" = "Population")
+
+bounds <- as.numeric(st_bbox(africa))
+
+inputPanel(
+  selectInput("var2", label = "Select variable:",
+              choices = c("Total cases per 100,000" = "rpk100",
+                          "Population" = "Pop2020",
+                          "SSA" = "SSA",
+                          "HDI in 2018" = "HDI_2018"))
+)
+
+
+
+renderLeaflet({
+  x <- africa[[input$var2]]
+  if (is.numeric(x)) {
+    pal <- colorNumeric(palette = "RdYlBu", 
+                      domain = x, reverse = T)
+  }
+  
+  if (is.factor(x)) {
+    pal <- colorFactor(palette = "Set3", 
+                       domain = x)
+  }
+
+# labF <- function(type, cuts, p) {
+#     n = length(cuts)
+#     paste0(round(cuts[-n]), " &ndash; ", round(cuts[-1]))
+#   }
+
+labels <- sprintf("<strong> %s </strong>
+                  : %s",
+                  as.character(africa$name),
+                  round(as.numeric(x))) %>%
+  lapply(htmltools::HTML)
+
+  
+leaflet(africa) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  flyToBounds(lng1 = bounds[1], lng2 = bounds[3],
+              lat1 = bounds[2], lat2 = bounds[4]) %>% 
+  addPolygons(
+    color = "grey", weight = 1,
+    fillColor = ~ pal(eval(as.name(input$var2))), fillOpacity = 0.5,
+    highlightOptions = highlightOptions(color = "black", weight = 3),
+    label = labels,
+    labelOptions = labelOptions(
+      style = list(
+        "font-weight" = "normal",
+        padding = "3px 8px"
+      ),
+      textsize = "15px", direction = "auto"
+    )
+  ) %>%
+  addLegend(pal = pal, values = ~ eval(as.name(input$var2)), 
+            opacity = 0.5,
+            title = name_vars_map[[input$var2]], position = "bottomleft")
+})
+```
+
+
+
 # Model output
 
 **Table 1: Maximum likelihood estimates and corresponding 95% confidence intervals for a model with 7-day lag.** For climatic variables, a 1 standard deviation increase in climatic variables results in the shown relative risk.  For stringency index, a 10% increase in stringency is associated with the increased relative risk shown. HDI and testing policy are on ordinal scale 0 to 3 (HDI) and 0 to 4 (testing policy). Estimates that are statistically significant are highlighted in green. The spatial weight decay, $\rho$, reflects the strength of inter-country connectivity, and overdispersion parameter, $\psi$.
